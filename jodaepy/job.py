@@ -5,10 +5,6 @@ import os
 import fcntl
 import re
 
-# asyncproc module
-from asyncproc import Process
-import git
-
 
 class JobError(Exception):
     pass
@@ -79,6 +75,9 @@ class Job:
     def set_process(self, process, host):
         self.process = process
         self.stime = time.strftime("%H:%M:%S, %d.%m.%Y")
+        self.stderr = []
+        self.stdout = []
+        self.outfiles = []
 
         self.running_host = host
         self.retcode = None
@@ -173,3 +172,37 @@ class Job:
         if self.returned():
             with open(logpath, "w") as log:
                 log.write(self.joblog_str())
+
+
+
+    def overview(self):
+
+        if not self.started():
+            status = "pending"
+        elif not self.returned():
+            status = "running"
+        elif not self.failed():
+            status = "finished"
+        else:
+            status = "failed"
+
+        status += " (%d%%)" % self.perc
+
+        content = []
+        
+        content.extend( [ "STATUS: %s" % status,
+                          "ID: %d" % self.id,
+                          "TITLE: %s" % self.title,
+                          #"PROJECT: %s" % (self.project if self.project else "/"),
+                          "CMD: %s" % self.cmd,
+                          "HOST: %s" % self.running_host,
+                          #"RCMD: %s" % ' '.join(self.rcmd),
+                          #"TAGS: %s" % ' '.join(self.tags),
+                          "START TIME: %s" % self.stime,
+                          "FINISH TIME: %s" % self.ftime,
+                          "FILES: %s" % ' '.join(self.outfiles),
+                          "DESCRIPTION:\n%s" % self.descr,
+                          "STDOUT:\n%s" % ''.join(self.stdout[-5:]),
+                          "STDERR:\n%s" % ''.join(self.stderr[-5:]),
+                        ] )
+        return '\n'.join(content)

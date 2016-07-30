@@ -2,8 +2,16 @@
 from datetime import datetime
 from time import sleep
 
-from error import RegistrationError, FinalizationError, PostprocessingError, HostUnavailableError, StartingError, PreparationError
+from error import RegistrationError, \
+                  FinalizationError, \
+                  PostprocessingError, \
+                  HostUnavailableError, \
+                  StartingError, \
+                  PreparationError
 
+#
+# The daemon
+#
 
 class Daemon:
     def __init__( self,
@@ -12,7 +20,7 @@ class Daemon:
                   control_interval = 5,
                   handle_interval  = 15,
                   comm_interval    = 1,
-                  initial_id    = 0
+                  initial_id       = 0
                 ):
 
         self.handler = handler
@@ -79,7 +87,15 @@ class Daemon:
             # Core-function
             #
 
-            self.core()
+            try:
+
+                self.core()
+
+            except KeyboardInterrupt as error:
+                for comm in self.communicators:
+                    comm.close()
+                raise error
+
 
 
 
@@ -93,7 +109,6 @@ class Daemon:
                 self.handle = True
             else:
                 self.handle = False
-            #print "Handle: " + str(self.handle)
 
 
             #
@@ -106,7 +121,6 @@ class Daemon:
                 self.control = True
             else:
                 self.control = False
-            #print "Control: " + str(self.control)
 
 
             #
@@ -119,7 +133,6 @@ class Daemon:
                 self.comm = True
             else:
                 self.comm = False
-            #print "Communicate: " + str(self.comm)
 
             
             #
@@ -127,7 +140,6 @@ class Daemon:
             #
 
             time = (datetime.now() - dt0).total_seconds()
-            #print "time: " + str(time)
 
             sleeptime = int(time) + 1 - time
             sleep(int(time) + 1 - time)
@@ -139,13 +151,12 @@ class Daemon:
         # Handle: Register new jobs, finish returned jobs
         #
 
-        #print "before handle, handle = ", str(self.handle)
         if self.handle:
-            #print "after handle"
 
             #
             # Handling new jobs
             #
+
 
             try:
                 
@@ -160,16 +171,14 @@ class Daemon:
                     comm.scripts_updated(self, scripts)
 
 
-                #print "Calling register_jobs"
                 new = self.handler.register_jobs(self)
             
                 self.pending_jobs.extend(new)
+
+                for job in new: self.register(job)
                 self.pending_jobs.sort(key = lambda job: - job.priority)
 
-                for job in new:
-                    job.set_id(self.next_id)
-                    self.next_id += 1
-            
+
                 for comm in self.communicators:
                     comm.jobs_registered(self, new)
 
@@ -181,6 +190,8 @@ class Daemon:
             #
             # Finish jobs
             #
+
+            
 
             finalized = []
             for job in reversed(self.returned_jobs):
@@ -200,8 +211,10 @@ class Daemon:
                     for comm in self.communicators:
                         comm.finalization_failed(self, job, error)
 
+
             for comm in self.communicators:
                 comm.jobs_finalized(self, finalized)
+
 
             #
             # Postprocessing (upload result files or similar stuff)
@@ -236,7 +249,7 @@ class Daemon:
                 _returned = [ job for job in self.running_jobs[host] if job.returned() ]
                 self.running_jobs[host] = [ job for job in self.running_jobs[host] if job not in _returned ]
                 returned.extend(_returned)
-                self.returned_jobs.extend(returned)
+                self.returned_jobs.extend(_returned)
 
             for comm in self.communicators:
                 comm.jobs_returned(self, returned)
@@ -245,8 +258,9 @@ class Daemon:
             # Start new jobs
             #
 
+
             started = []
-            for job in reversed(self.pending_jobs): # need reversed to remove while iterating
+            for job in reversed(list(reversed(self.pending_jobs))): # need reversed to remove while iterating
                 try:
                     host = self.fitting_host(job)
                     if host:
@@ -293,23 +307,61 @@ class Daemon:
                 comm.communicate(self)
 
 
+    def register(self, job):
+        job.set_id(self.next_id)
+        self.next_id += 1
+
     def free_jobslots(self, host):
         return self.jobslots[host] - len(self.running_jobs[host])
         
+
     def fitting_host(self, job):
+
+        working_hosts  = [ host for host in self.hosts if self.handler.check_host(host) ]
+        possible_hosts = working_hosts if job.hosts == None else [ host for host in working_hosts if host in job.hosts ]
 
         def key(host): return self.free_jobslots(host)
 
         try:
-            hosts = sorted(job.hosts, key = key) if job.hosts else sorted(self.hosts, key = key)
-            if self.free_jobslots(hosts[-1]) == 0:
+            ordered_hosts = sorted(possible_hosts, key = key)
+            if len(ordered_hosts) == 0 or self.free_jobslots(ordered_hosts[-1]) == 0:
                 return None
             else:
-                return hosts[-1]
+                return ordered_hosts[-1]
 
         except KeyError:
             raise HostUnavailableError
 
                   
+    def job(self, jobid):
+        for job in self.pending_jobs:
+            if job.id == jobid: return job
+
+        for job in self.returned_jobs:
+            if job.id == jobid: return job
+
+        for job in self.failed_jobs:
+            if job.id == jobid: return job
+
+        for job in self.finished_jobs:
+            if job.id == jobid: return job
+
+        for host in self.hosts:
+            for job in self.running_jobs[host]:
+                if job.id == jobid: return job
+
+        return None
 
 
+    def remove_job(self, job):
+        try: self.pending_jobs.remove(job)
+        except: pass
+        try: self.returned_jobs.remove(job)
+        except: pass
+        try: self.failed_jobs.remove(job)
+        except: pass
+        try: self.finished_jobs.remove(job)
+        except: pass
+        for host in self.hosts:
+            try: self.running_jobs[host].remove(job)
+            except: pass

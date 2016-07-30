@@ -1,62 +1,23 @@
 
-from os import path, makedirs
+from os import path, makedirs, OSError
 from glob import glob
 import shutil
 
-from time import sleep
-
 from subprocess import Popen, PIPE
 
-from job import Job
+from ..job import Job
 
-import util
+from ..handler import Handler
 
-from error import RegistrationError, \
+import ..util
+
+from ..error import RegistrationError, \
                   FinalizationError, \
                   PostprocessingError, \
                   HostUnavailableError, \
                   StartingError, \
                   PreparationError, \
                   GitExecError
-
-
-
-
-
-class Handler:
-    def prepare(self, daemon):
-        pass
-
-    def update_workspace(self, daemon):
-        pass
-
-    def update_scripts( self, daemon ):
-        pass
-
-    def register_jobs(self, daemon):
-        pass
-
-    def check_host(self, daemon, host):
-        pass
-
-    def start_job(self, daemon, job, host):
-        pass
-
-    def kill_job(self, daemon, job, host):
-        pass
-
-    def finalize_job(self, daemon, job):
-        pass
-
-    def postprocess(self, daemon):
-        pass
-
-
-
-
-
-
-
 
 
 class SSHGitHandler(Handler):
@@ -161,12 +122,6 @@ class SSHGitHandler(Handler):
         except OSError as error:
             raise StartingError(str(error))
 
-    def kill_job(self, daemon, job, host):
-        job.process.kill()
-        sleep(0.1)
-        return job.returned()
-
-
 
     def update_workspace( self, daemon ):
         try:
@@ -206,13 +161,14 @@ class SSHGitHandler(Handler):
             try:
                 execfile(jobpath)
             except Exception as error:
-                util.move_to_dir(jobpath, self.jobarchive)
+                move_to_dir(jobpath, self.jobarchive)
                 msg = "Error executing jobfile %s. " % jobfile +\
                       "Moved it to job archive %s. " % self.jobarchive +\
                       "Original error message:\n" + str(error)
                 try:
                     util.git_add(jobfiles, self.jobarchive)
-                    util.git_add(jobfiles, self.jobdir, "-u")
+                    util.git_add(jobfiles, self.jobdir)
+                    #print "git add %s" % archived_files
                     util.git_commit(self.jobarchive, "registered jobs %s" % 
                                                 [job.id for job in new_jobs] )
                     #print "git commit"
@@ -226,12 +182,14 @@ class SSHGitHandler(Handler):
         # So it worked for every file. Move them to archive and push
         for jobfile in jobfiles:
             jobpath = path.join(self.jobdir, jobfile)
-            util.move_to_dir(jobpath, self.jobarchive)
+            move_to_dir(jobpath, self.jobarchive)
 
+        # BUG: if a jobfile in jobarchive is overwritten with a content-identical
+        # file, git commit will fail
         if jobfiles:
             try:
                 util.git_add(jobfiles, self.jobarchive)
-                util.git_add(jobfiles, self.jobdir, "-u")
+                util.git_add(jobfiles, self.jobdir)
                 util.git_commit(self.jobarchive, "registered jobs %s" % 
                                             [job.id for job in new_jobs] )
                 util.git_pull(self.jobarchive)
